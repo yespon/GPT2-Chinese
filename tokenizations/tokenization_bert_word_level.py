@@ -20,11 +20,14 @@ import collections
 import logging
 import os
 import unicodedata
+import thulac
 from io import open
 
-from pytorch_transformers.tokenization_utils import PreTrainedTokenizer, clean_up_tokenization
+from pytorch_transformers.tokenization_utils import PreTrainedTokenizer
 
 logger = logging.getLogger(__name__)
+
+lac = thulac.thulac(user_dict='tokenizations/thulac_dict/seg', seg_only=True)
 
 VOCAB_FILES_NAMES = {'vocab_file': 'vocab.txt'}
 
@@ -287,18 +290,32 @@ class BasicTokenizer(object):
 
         return ["".join(x) for x in output]
 
+    # def _tokenize_chinese_chars(self, text):
+    #     """Adds whitespace around any CJK character."""
+    #     output = []
+    #     for char in text:
+    #         cp = ord(char)
+    #         if self._is_chinese_char(cp) or char.isdigit():
+    #             output.append(" ")
+    #             output.append(char)
+    #             output.append(" ")
+    #         else:
+    #             output.append(char)
+    #     return "".join(output)
     def _tokenize_chinese_chars(self, text):
         """Adds whitespace around any CJK character."""
         output = []
         for char in text:
-            cp = ord(char)
-            if self._is_chinese_char(cp) or char.isdigit():
+            if char.isdigit():
                 output.append(" ")
                 output.append(char)
                 output.append(" ")
             else:
                 output.append(char)
-        return "".join(output)
+        text = "".join(output)
+        text = [item[0].strip() for item in lac.cut(text)]
+        text = [item for item in text if item]
+        return " ".join(text)
 
     def _is_chinese_char(self, cp):
         """Checks whether CP is the codepoint of a CJK character."""
@@ -364,39 +381,35 @@ class WordpieceTokenizer(object):
 
         output_tokens = []
         for token in whitespace_tokenize(text):
-            if token in self.vocab:
-                output_tokens.append(token)
-            else:
+            chars = list(token)
+            if len(chars) > self.max_input_chars_per_word:
                 output_tokens.append(self.unk_token)
-            # chars = list(token)
-            # if len(chars) > self.max_input_chars_per_word:
-            #     output_tokens.append(self.unk_token)
-            #     continue
-            #
-            # is_bad = False
-            # start = 0
-            # sub_tokens = []
-            # while start < len(chars):
-            #     end = len(chars)
-            #     cur_substr = None
-            #     while start < end:
-            #         substr = "".join(chars[start:end])
-            #         if start > 0:
-            #             substr = "##" + substr
-            #         if substr in self.vocab:
-            #             cur_substr = substr
-            #             break
-            #         end -= 1
-            #     if cur_substr is None:
-            #         is_bad = True
-            #         break
-            #     sub_tokens.append(cur_substr)
-            #     start = end
-            #
-            # if is_bad:
-            #     output_tokens.append(self.unk_token)
-            # else:
-            #     output_tokens.extend(sub_tokens)
+                continue
+
+            is_bad = False
+            start = 0
+            sub_tokens = []
+            while start < len(chars):
+                end = len(chars)
+                cur_substr = None
+                while start < end:
+                    substr = "".join(chars[start:end])
+                    if start > 0:
+                        substr = "##" + substr
+                    if substr in self.vocab:
+                        cur_substr = substr
+                        break
+                    end -= 1
+                if cur_substr is None:
+                    is_bad = True
+                    break
+                sub_tokens.append(cur_substr)
+                start = end
+
+            if is_bad:
+                output_tokens.append(self.unk_token)
+            else:
+                output_tokens.extend(sub_tokens)
         return output_tokens
 
 

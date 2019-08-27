@@ -3,7 +3,6 @@ import torch
 import os
 import json
 import random
-import tokenization_bert
 import argparse
 import numpy as np
 from datetime import datetime
@@ -57,15 +56,15 @@ def main():
     parser.add_argument('--num_pieces', default=100, type=int, required=False, help='将训练语料分成多少份')
     parser.add_argument('--output_dir', default='model/', type=str, required=False, help='模型输出路径')
     parser.add_argument('--pretrained_model', default='', type=str, required=False, help='模型训练起点路径')
-    parser.add_argument('--no_wordpiece', action='store_true', help='不做word piece切词')
+    parser.add_argument('--segment', action='store_true', help='中文以词为单位')
 
     args = parser.parse_args()
     print('args:\n' + args.__repr__())
 
-    if args.no_wordpiece:
-        import tokenization_bert_without_wordpiece as tokenization_bert
+    if args.segment:
+        from tokenizations import tokenization_bert_word_level as tokenization_bert
     else:
-        import tokenization_bert
+        from tokenizations import tokenization_bert
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device  # 此处设置程序使用哪些显卡
     model_config = pytorch_transformers.modeling_gpt2.GPT2Config.from_json_file(args.model_config)
@@ -129,6 +128,7 @@ def main():
         model = DataParallel(model)
         multi_gpu = True
     print('starting training')
+    running_loss = 0
     for epoch in range(epochs):
         print('epoch {}'.format(epoch + 1))
         now = datetime.now()
@@ -137,7 +137,6 @@ def main():
         random.shuffle(x)
         piece_num = 0
         for i in x:
-            running_loss = 0
             with open(tokenized_data_path + 'tokenized_train_{}.txt'.format(i), 'r') as f:
                 line = f.read().strip()
             tokens = line.split()
@@ -184,9 +183,9 @@ def main():
                 #  optimizer step
                 if (step + 1) % gradient_accumulation == 0:
                     running_loss += loss.item()
-                    scheduler.step()
                     optimizer.step()
                     optimizer.zero_grad()
+                    scheduler.step()
                 if (step + 1) % log_step == 0:
                     print('now time: {}:{}. Step {} of piece {} of epoch {}, loss {}'.format(
                         datetime.now().hour,

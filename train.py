@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from tqdm import tqdm
 from torch.nn import DataParallel
+from tokenizations.bpe_tokenizer import get_encoder
 
 
 def build_files(data_path, tokenized_data_path, num_pieces, full_tokenizer, min_length):
@@ -62,15 +63,18 @@ def main():
     parser.add_argument('--output_dir', default='model/', type=str, required=False, help='模型输出路径')
     parser.add_argument('--pretrained_model', default='', type=str, required=False, help='模型训练起点路径')
     parser.add_argument('--writer_dir', default='tensorboard_summary/', type=str, required=False, help='Tensorboard路径')
-    parser.add_argument('--no_wordpiece', action='store_true', help='不做word piece切词')
+    parser.add_argument('--segment', action='store_true', help='中文以词为单位')
+    parser.add_argument('--bpe_token', action='store_true', help='subword')
+    parser.add_argument('--encoder_json', default="tokenizations/encoder.json", type=str, help="encoder.json")
+    parser.add_argument('--vocab_bpe', default="tokenizations/vocab.bpe", type=str, help="vocab.bpe")
 
     args = parser.parse_args()
     print('args:\n' + args.__repr__())
 
-    if args.no_wordpiece:
-        import tokenization_bert_without_wordpiece as tokenization_bert
+    if args.segment:
+        from tokenizations import tokenization_bert_word_level as tokenization_bert
     else:
-        import tokenization_bert
+        from tokenizations import tokenization_bert
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.device  # 此处设置程序使用哪些显卡
 
@@ -78,7 +82,10 @@ def main():
     print('config:\n' + model_config.to_json_string())
 
     n_ctx = model_config.n_ctx
-    full_tokenizer = tokenization_bert.BertTokenizer(vocab_file=args.tokenizer_path)
+    if args.bpe_token:
+        full_tokenizer = get_encoder(args.encoder_json, args.vocab_bpe)
+    else:
+        full_tokenizer = tokenization_bert.BertTokenizer(vocab_file=args.tokenizer_path)
     full_tokenizer.max_len = n_ctx
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('using device:', device)
@@ -148,6 +155,7 @@ def main():
         multi_gpu = True
     print('starting training')
     overall_step = 0
+    running_loss = 0
     for epoch in range(epochs):
         print('epoch {}'.format(epoch + 1))
         now = datetime.now()
@@ -156,7 +164,6 @@ def main():
         random.shuffle(x)
         piece_num = 0
         for i in x:
-            running_loss = 0
             with open(tokenized_data_path + 'tokenized_train_{}.txt'.format(i), 'r') as f:
                 line = f.read().strip()
             tokens = line.split()
@@ -206,9 +213,9 @@ def main():
                 #  optimizer step
                 if (step + 1) % gradient_accumulation == 0:
                     running_loss += loss.item()
-                    scheduler.step()
                     optimizer.step()
                     optimizer.zero_grad()
+                    scheduler.step()
                     overall_step += 1
                     if (overall_step + 1) % log_step == 0:
                         tb_writer.add_scalar('loss', loss.item(), overall_step)
